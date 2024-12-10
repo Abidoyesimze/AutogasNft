@@ -25,7 +25,7 @@ describe('AutoGasNFT', function () {
         const SafeWallet = await ethers.getContractFactory('MockSafeWallet');
         const treasuryWallet = await SafeWallet.deploy();
 
-        // Deploy the main contract
+        // Deploy the  contract
         const AutoGasNFT = await ethers.getContractFactory('AutoGasNFT');
         autoGasNFT = await AutoGasNFT.deploy(
             UNISWAP_V3_QUOTER,
