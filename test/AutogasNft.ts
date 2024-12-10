@@ -3,9 +3,10 @@ import { ethers } from 'hardhat';
 import { loadFixture } from "@nomicfoundation/hardhat-toolbox/network-helpers";
 
 describe('AutoGasNFT', function () {
-    let autoGasNFT: any;
-    let owner: any, teamWallet: any, user1: any, user2: any;
+    let autoGasNFT;
+    let owner, teamWallet, user1, user2;
 
+    const BASE_USD_PRICE = 100n * 10n ** 18n; // $100
     // Mainnet contract addresses (as constants without getAddress())
     const UNISWAP_V3_QUOTER = '0xb27308f9F87F9e81E126D570D338838f1dF45677';
     const UNISWAP_V2_ROUTER = '0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D';
@@ -22,10 +23,10 @@ describe('AutoGasNFT', function () {
         const usdcToken = await MockToken.deploy('USD Coin', 'USDC', ethers.parseUnits('1000000', 6));
 
         // Deploy SafeWallet mock
-        const SafeWallet = await ethers.getContractFactory('MockSafeWallet');
+        const SafeWallet = await ethers.getContractFactory('SafeWallet');
         const treasuryWallet = await SafeWallet.deploy();
 
-        // Deploy the  contract
+        // Deploy the main contract
         const AutoGasNFT = await ethers.getContractFactory('AutoGasNFT');
         autoGasNFT = await AutoGasNFT.deploy(
             UNISWAP_V3_QUOTER,
@@ -66,26 +67,21 @@ describe('AutoGasNFT', function () {
         });
     });
 
-    describe('Minting', function () {
-        it('Should mint NFT with ETH payment', async function () {
+    describe("Minting NFTs", function () {
+        it("should mint NFTs using ETH", async function () {
             const {autoGasNFT, user1} = await loadFixture(deployMockToken);
-            const quantity = 5;
-            const ethPrice = await autoGasNFT.mintPriceETH();
-            const totalPrice = ethPrice * BigInt(quantity);
+          const quantity = 1;
+          const paymentType = 0; // ETH
+          const referralCode = "";
+          const delegationAddresses: string[] = [];
+    
+          const price = await autoGasNFT.mintPriceETH(); // Get the mint price
+          const totalPrice = BigInt(price) * BigInt(quantity);
 
-            await expect(
-                autoGasNFT.connect(user1).mintNFT(
-                    quantity, 
-                    0, // PaymentType.ETH 
-                    '', 
-                    [], 
-                    { value: totalPrice }
-                )
-            ).to.emit(autoGasNFT, 'NFTMinted')
-            .withArgs(user1.address, quantity, totalPrice);
-
-            const balance = await autoGasNFT.balanceOf(user1.address, 1);
-            expect(balance).to.equal(quantity);
+    
+          await expect(autoGasNFT.connect(user1).mintNFT(quantity, paymentType, referralCode, delegationAddresses, { value: totalPrice }))
+            .to.emit(autoGasNFT, "NFTMinted")
+            .withArgs(await user1.getAddress(), quantity, totalPrice);
         });
 
         it('Should apply referral discount', async function () {

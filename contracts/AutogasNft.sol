@@ -5,7 +5,7 @@ import "@openzeppelin/contracts/token/ERC1155/ERC1155.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-
+import "./SafeWallet.sol";
 //Uniswap V3 quoter interface
 interface IUniswapV3Quoter {
     function quoteExactInputSingle(
@@ -42,15 +42,13 @@ interface IUniswapV2Router02 {
     ) external returns (uint[] memory amounts);
 }
 
-interface ISafeWallet {
-    function deposit(uint256 amount) external;
-}
 
 interface ISpeedToken {
     function transfer(address recipient, uint256 amount) external returns (bool);
 }
 
 contract AutoGasNFT is ERC1155, Ownable, ReentrancyGuard {
+        SafeWallet public treasuryWallet;
     // Pricing Constants
     uint256 public constant BASE_USD_PRICE = 100 * 10**18; // $100
 
@@ -67,14 +65,14 @@ contract AutoGasNFT is ERC1155, Ownable, ReentrancyGuard {
     IUniswapV2Router02 public uniswapRouter;
     IERC20 public usdcToken;
     IUniswapV3Quoter public v3Quoter;
-    ISafeWallet public treasuryWallet;
+
 
       // Dynamic Pricing Variables
     uint256 public mintPriceETH;  // Price in ETH to mint
     uint256 public mintPriceCore;  // Price in Core tokens to mint
     uint256 public lastPriceUpdateTimestamp;
 
-    // Pricing Pools (to be configured)
+    // Pricing Pools 
     address public constant WETH_USDC_POOL = address(0); // Highest volume V3 pool
     uint24 public constant POOL_FEE = 3000; // 0.3% fee tier
 
@@ -134,14 +132,14 @@ contract AutoGasNFT is ERC1155, Ownable, ReentrancyGuard {
     address _coreTokenAddress,
     address _speedTokenAddress,
     address _uniswapRouterAddress,
-    address _treasuryWalletAddress
+    SafeWallet _treasuryWallet
 ) ERC1155("https://autogas.xyz/nft/{id}.json") Ownable(msg.sender) {
     v3Quoter = IUniswapV3Quoter(_v3Quoter);
     teamWallet = _teamWallet;
     coreToken = IERC20(_coreTokenAddress);
     speedToken = ISpeedToken(_speedTokenAddress);
     uniswapRouter = IUniswapV2Router02(_uniswapRouterAddress);
-    treasuryWallet = ISafeWallet(_treasuryWalletAddress);
+    treasuryWallet = _treasuryWallet;
 
     // Initial price update
         updateMintPrices();
@@ -292,7 +290,7 @@ function executeSecondPurchaseStage(uint256 purchaseId) external {
         // Approve and deposit total tokens to treasury
         uint256 totalTokens = coreToken.balanceOf(address(this));
         coreToken.approve(address(treasuryWallet), totalTokens);
-        treasuryWallet.deposit(totalTokens);
+        treasuryWallet.deposit(address (coreToken), totalTokens);
         
         emit StrategicPurchaseStageCompleted(purchaseId, purchase.finalPurchaseAmount, amounts[1]);
     }
@@ -427,7 +425,7 @@ function executeSecondPurchaseStage(uint256 purchaseId) external {
         path[1] = address(coreToken);
         
         uint[] memory amounts = uniswapRouter.swapExactETHForTokens{value: amount}(
-            0, // Accept any amount 
+            0, // Accept any amount (set slippage protection in frontend)
             path,
             address(this),
             block.timestamp + 300 // 5 minutes deadline
@@ -436,7 +434,7 @@ function executeSecondPurchaseStage(uint256 purchaseId) external {
         // Deposit Core tokens to treasury
         uint256 coreAmount = amounts[1];
         coreToken.approve(address(treasuryWallet), coreAmount);
-        treasuryWallet.deposit(coreAmount);
+        treasuryWallet.deposit(address(coreToken), coreAmount);
         
         emit CorePurchased(coreAmount);
     }
