@@ -5,6 +5,8 @@ import "@openzeppelin/contracts/token/ERC1155/ERC1155.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {AggregatorV3Interface} from "@chainlink/contracts/src/v0.8/shared/interfaces/AggregatorV3Interface.sol";
+
 import "./SafeWallet.sol";
 //Uniswap V3 quoter interface
 interface IUniswapV3Quoter {
@@ -16,6 +18,8 @@ interface IUniswapV3Quoter {
         uint160 sqrtPriceLimitX96
     ) external returns (uint256 amountOut);
 }
+
+    
 
 // Extended router interface for price checking
 
@@ -49,6 +53,9 @@ interface ISpeedToken {
 
 contract AutoGasNFT is ERC1155, Ownable, ReentrancyGuard {
         SafeWallet public treasuryWallet;
+        AggregatorV3Interface internal ethPriceFeed;
+    AggregatorV3Interface internal corePriceFeed;
+    AggregatorV3Interface internal usdcPriceFeed;
     // Pricing Constants
     uint256 public constant BASE_USD_PRICE = 100 * 10**18; // $100
 
@@ -132,15 +139,21 @@ contract AutoGasNFT is ERC1155, Ownable, ReentrancyGuard {
     address _coreTokenAddress,
     address _speedTokenAddress,
     address _uniswapRouterAddress,
-    SafeWallet _treasuryWallet
-) ERC1155("https://autogas.xyz/nft/{id}.json") Ownable(msg.sender) {
+    SafeWallet _treasuryWallet,
+    address _ethPriceFeedAddress,
+        address _corePriceFeedAddress,
+        address _usdcPriceFeedAddress
+) ERC1155("") Ownable(msg.sender) {
     v3Quoter = IUniswapV3Quoter(_v3Quoter);
     teamWallet = _teamWallet;
     coreToken = IERC20(_coreTokenAddress);
     speedToken = ISpeedToken(_speedTokenAddress);
     uniswapRouter = IUniswapV2Router02(_uniswapRouterAddress);
     treasuryWallet = _treasuryWallet;
-
+    ethPriceFeed = AggregatorV3Interface(_ethPriceFeedAddress);
+        corePriceFeed = AggregatorV3Interface(_corePriceFeedAddress);
+        usdcPriceFeed = AggregatorV3Interface(_usdcPriceFeedAddress);
+    
     // Initial price update
         updateMintPrices();
 }
@@ -157,36 +170,36 @@ function updateMintPrices() public {
         lastPriceUpdateTimestamp = block.timestamp;
     }
 
-    function getETHPriceInUSD() public  returns (uint256) {
-        // Use Uniswap V3 Quoter to get ETH/USDC price
-        // 1 WETH input to get USDC out
-        try v3Quoter.quoteExactInputSingle(
-            WETH, 
-            USDC, 
-            POOL_FEE, 
-            10**18,  // 1 ETH
-            0  // No price limit
-        ) returns (uint256 usdcAmount) {
-            return usdcAmount;
-        } catch {
-            // Fallback to V2 router if V3 fails
-            address[] memory path = new address[](2);
-            path[0] = WETH;
-            path[1] = USDC;
-            uint[] memory amounts = uniswapRouter.getAmountsOut(10**18, path);
-            return amounts[1];
-        }
+    function getLatestPrice(AggregatorV3Interface priceFeed) internal view returns (uint256) {
+    (
+        /* uint80 roundID */,
+        int price,
+        /* uint startedAt */,
+        uint timeStamp,
+        /* uint80 answeredInRound */
+    ) = priceFeed.latestRoundData();
+    
+    // Check price is not negative
+    require(price > 0, "Invalid price");
+    
+    // Optional: Check price is not too old (e.g., within last 24 hours)
+    require(block.timestamp - timeStamp <= 1 days, "Price feed data is stale");
+    
+    // Adjust decimals to 18 decimal places
+    uint8 decimals = priceFeed.decimals();
+    return uint256(price) * (10 ** (18 - decimals));
+}
+
+    function getETHPriceInUSD() public view returns (uint256) {
+        return getLatestPrice(ethPriceFeed);
     }
 
     function getCorePriceInUSD() public view returns (uint256) {
-        // Similar approach for Core token pricing
-        address[] memory path = new address[](3);
-        path[0] = address(coreToken);
-        path[1] = WETH;
-        path[2] = USDC;
-        
-        uint[] memory amounts = uniswapRouter.getAmountsOut(10**18, path);
-        return amounts[2];
+        return getLatestPrice(corePriceFeed);
+    }
+
+    function getUSDCPriceInUSD() public view returns (uint256) {
+        return getLatestPrice(usdcPriceFeed);
     }
 
 
@@ -296,20 +309,33 @@ function executeSecondPurchaseStage(uint256 purchaseId) external {
     }
 
     // View function to check strategic purchase status
-    function getStrategicPurchaseStatus(uint256 purchaseId) external view returns (
+    function getStrategicPurchaseDetails(uint256 purchaseId) 
+    external 
+    view 
+    returns (
         uint256 totalAmount,
+        uint256 initialPurchaseAmount,
+        uint256 secondPurchaseAmount,
+        uint256 finalPurchaseAmount,
+        uint256 initialPurchaseTimestamp,
         bool initialPurchaseComplete,
         bool secondPurchaseComplete,
         bool finalPurchaseComplete
-    ) {
-        StrategicPurchase memory purchase = strategicPurchases[purchaseId];
-        return (
-            purchase.totalAmount,
-            purchase.initialPurchaseComplete,
-            purchase.secondPurchaseComplete,
-            purchase.finalPurchaseComplete
-        );
-    }
+    ) 
+{
+    StrategicPurchase storage purchase = strategicPurchases[purchaseId];
+    return (
+        purchase.totalAmount,
+        purchase.initialPurchaseAmount,
+        purchase.secondPurchaseAmount,
+        purchase.finalPurchaseAmount,
+        purchase.initialPurchaseTimestamp,
+        purchase.initialPurchaseComplete,
+        purchase.secondPurchaseComplete,
+        purchase.finalPurchaseComplete
+    );
+}
+
 
     function mintNFT(
         uint256 quantity,

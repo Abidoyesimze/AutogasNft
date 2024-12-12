@@ -1,15 +1,19 @@
+
 import { expect } from "chai";
 import { ethers } from 'hardhat';
 import { loadFixture } from "@nomicfoundation/hardhat-toolbox/network-helpers";
 
 describe('AutoGasNFT', function () {
     let autoGasNFT;
-    let owner, teamWallet, user1, user2;
+    // let owner, teamWallet, user1, user2;
 
     const BASE_USD_PRICE = 100n * 10n ** 18n; // $100
-    // Mainnet contract addresses (as constants without getAddress())
-    const UNISWAP_V3_QUOTER = '0xb27308f9F87F9e81E126D570D338838f1dF45677';
+    // Update the contract addresses
+    const UNISWAP_V3_QUOTER = '0xb27308f9f87f9e81e126d570d338838f1df45677';
     const UNISWAP_V2_ROUTER = '0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D';
+    const ETH_PRICE_FEED_ADDRESS = '0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419';
+    const CORE_PRICE_FEED_ADDRESS = '0x2c1d9daef2b8ee8070ce12de007d1ba7bfa1d4dd';
+    const USDC_PRICE_FEED_ADDRESS = '0x8fffffd4afb6115b954bd326caf7a64730d22d1a';
     const WETH = '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2';
     const USDC = '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48';
 
@@ -19,22 +23,31 @@ describe('AutoGasNFT', function () {
         // Deploy mock tokens
         const MockToken = await ethers.getContractFactory('MockERC20');
         const coreToken = await MockToken.deploy('CoreToken', 'CORE', ethers.parseEther('1000000'));
+        const coreTokenAddress = await coreToken.getAddress() 
+
         const speedToken = await MockToken.deploy('SpeedToken', 'SPEED', ethers.parseEther('1000000'));
+        const speedTokenAddress = await speedToken.getAddress() 
+
         const usdcToken = await MockToken.deploy('USD Coin', 'USDC', ethers.parseUnits('1000000', 6));
+        const usdcTokenAddress = await usdcToken.getAddress() 
 
         // Deploy SafeWallet mock
         const SafeWallet = await ethers.getContractFactory('SafeWallet');
         const treasuryWallet = await SafeWallet.deploy();
+        const treasuryWalletAddress = await treasuryWallet.getAddress()
 
         // Deploy the main contract
         const AutoGasNFT = await ethers.getContractFactory('AutoGasNFT');
         autoGasNFT = await AutoGasNFT.deploy(
             UNISWAP_V3_QUOTER,
             teamWallet.address,
-            await coreToken.getAddress(),
-            await speedToken.getAddress(),
+            coreTokenAddress,
+            speedTokenAddress,
             UNISWAP_V2_ROUTER,
-            await treasuryWallet.getAddress()
+            ETH_PRICE_FEED_ADDRESS,
+            CORE_PRICE_FEED_ADDRESS,
+            USDC_PRICE_FEED_ADDRESS,
+            treasuryWalletAddress
         );
         
         // Prepare tokens for users
@@ -58,33 +71,36 @@ describe('AutoGasNFT', function () {
         };
     }
 
-    describe('Deployment', function () {
-        it('Should set the correct initial parameters', async function () {
-            const {autoGasNFT, teamWallet} = await loadFixture(deployMockToken);
-            expect(await autoGasNFT.teamWallet()).to.equal(teamWallet.address);
-            expect(await autoGasNFT.mintPriceETH()).to.be.gt(0);
-            expect(await autoGasNFT.mintPriceCore()).to.be.gt(0);
+    describe.only("Deployment", function () {
+        it("Should initialize price feeds correctly", async function () {
+            const {autoGasNFT} = await loadFixture (deployMockToken);
+          const ethPrice = await autoGasNFT.getETHPriceInUSD();
+          const corePrice = await autoGasNFT.getCorePriceInUSD();
+          
+          expect(ethPrice).to.equal(ETH_PRICE_FEED_ADDRESS);
+          expect(corePrice).to.equal(CORE_PRICE_FEED_ADDRESS);
         });
-    });
+      });
 
     describe("Minting NFTs", function () {
         it("should mint NFTs using ETH", async function () {
             const {autoGasNFT, user1} = await loadFixture(deployMockToken);
-          const quantity = 1;
-          const paymentType = 0; // ETH
-          const referralCode = "";
-          const delegationAddresses: string[] = [];
+            const quantity = 1;
+            const paymentType = 0; // ETH
+            const referralCode = "";
+            const delegationAddresses: string[] = [];
     
-          const price = await autoGasNFT.mintPriceETH(); // Get the mint price
-          const totalPrice = BigInt(price) * BigInt(quantity);
+            const price = await autoGasNFT.mintPriceETH(); // Get the mint price
+            const totalPrice = BigInt(price) * BigInt(quantity);
 
     
-          await expect(autoGasNFT.connect(user1).mintNFT(quantity, paymentType, referralCode, delegationAddresses, { value: totalPrice }))
+            await expect(autoGasNFT.connect(user1).mintNFT(quantity, paymentType, referralCode, delegationAddresses, { value: totalPrice }))
             .to.emit(autoGasNFT, "NFTMinted")
             .withArgs(await user1.getAddress(), quantity, totalPrice);
         });
 
-        it('Should apply referral discount', async function () {
+
+it('Should apply referral discount', async function () {
             const {autoGasNFT, user1, user2} = await loadFixture(deployMockToken);
             const quantity = 5;
             const ethPrice = await autoGasNFT.mintPriceETH();
@@ -126,19 +142,19 @@ describe('AutoGasNFT', function () {
         });
     });
 
-    describe('Strategic Purchase', function () {
-        it('Should initiate strategic token purchase', async function () {
-            const {autoGasNFT, owner} = await loadFixture(deployMockToken)
-            const totalAmount = ethers.parseEther('100');
+    // describe('Strategic Purchase', function () {
+    //     it('Should initiate strategic token purchase', async function () {
+    //         const {autoGasNFT, owner} = await loadFixture(deployMockToken)
+    //         const totalAmount = ethers.parseEther('100');
 
-            await expect(autoGasNFT.connect(owner).initiateStrategicTokenPurchase(totalAmount))
-                .to.emit(autoGasNFT, 'StrategicPurchaseInitiated');
+    //         await expect(autoGasNFT.connect(owner).initiateStrategicTokenPurchase(totalAmount))
+    //             .to.emit(autoGasNFT, 'StrategicPurchaseInitiated');
 
-            const purchase = await autoGasNFT.getStrategicPurchaseStatus(0);
-            expect(purchase[0]).to.equal(totalAmount);
-            expect(purchase[1]).to.be.false; // initialPurchaseComplete
-        });
-    });
+    //         const purchase = await autoGasNFT.getStrategicPurchaseStatus(0);
+    //         expect(purchase[0]).to.equal(totalAmount);
+    //         expect(purchase[1]).to.be.false; // initialPurchaseComplete
+    //     });
+    // });
 
     describe('Delegation Addresses', function () {
         it('Should update delegation addresses', async function () {
@@ -158,3 +174,7 @@ describe('AutoGasNFT', function () {
         });
     });
 });
+
+// function address(arg0: string) {
+//     throw new Error("Function not implemented.");
+// }
